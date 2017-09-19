@@ -1,39 +1,52 @@
 % vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
-function [dx_tot, flag, new_data] = batchChemReactorModel(t,XZ,XZp,ida_user_data) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
+function [overall_residual_vector, flag, new_data] = batchChemReactorModel(t,XZ,XZp,ida_user_data_struct) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
+    % This function implements all the model equations, returning their
+    % residual. This function will be repeatedly called by IDA in a time-stepping loop.
+    % Note. X: vector of differential (time-derivative) states, Z: vector of algebraic states
 
+    %% dummy variables for IDA
     flag     = 0;  % These two variables are not used but required by IDA(s) solver.
     new_data = []; % These two variables are not used but required by IDA(s) solver.
 
-    % Retreive data from the UserData field of IDA(s)
-    param  = ida_user_data.param;
-    t0     = ida_user_data.t0;
-    tf     = ida_user_data.tf;
-    n_diff = ida_user_data.n_diff;
-    % n_alg  = ida_user_data.n_alg;
+    %% Unpack data from the 'UserData' structure into various fields
+    model_params = ida_user_data_struct.model_params;
+    %     t0     = ida_user_data_struct.t0;
+    %     tf     = ida_user_data_struct.tf;
+    n_diff       = ida_user_data_struct.n_diff;
+    time_profile = ida_user_data_struct.time_profile;
+    Temp_profile = ida_user_data_struct.Temp_profile;
+    % n_alg      = ida_user_data.n_alg;
 
-    residual_array = []; % Empty the total array of residuals.
 
-    Xp = XZp(1:n_diff);
+    X  = [XZ(1);XZ(2);XZ(3);XZ(4);XZ(5);XZ(6)]; % state vector (differential variables only)
+    Z  = [XZ(7);XZ(8);XZ(9);XZ(10)];            % Build the array of algebraic variables
+    Xp = XZp(1:n_diff);                         % retain only the first n_diff components of the combined derivative vector. Only these are required in the model equations below
 
-    %% Extract the state variables, algebraic variables and state derivatives
-    %from the corresponding combined vectors passed in
-    x0 = XZ(1);
-    x1 = XZ(2);
-    x2 = XZ(3);
-    x3 = XZ(4);
-    x4 = XZ(5);
-    x5 = XZ(6);
+    %     residual_array = []; % Empty the total array of residuals.
 
-    z0 = XZ(7);
-    z1 = XZ(8);
-    z2 = XZ(9);
-    z3 = XZ(10);
+    %% Compute dynamically varying coefficients in the model equations (i.e. those coeffs which are function of time, t)
+    T_degC = interp1(time_profile,Temp_profile,t);  % Temperature at time t (degC)
+    k1     = model_params.alpha_1*exp(-model_params.E1_over_R/(T_degC+273));
+    k2     = model_params.alpha_2*exp(-model_params.E2_over_R/(T_degC+273));
+    k3     = k1;
+    km1    = model_params.alpha_m1*exp(-model_params.Em1_over_R/(T_degC+273));
+    km3    = 0.5*km1;
 
-    x0_dot = Xp(1);
-    x1_dot = Xp(2);
-    x2_dot = Xp(3);
-    x3_dot = Xp(4);
+    %% Actual model equations of the non-linear DAE model
+    % Components of residual vector of differential state variables (i.e. time-domain derivative variables)
+    % Refer to paper for the equations themselves
+    res_X_dot(1) = Xp(1) - (-k2*X(2)*Z(2));
+    res_X_dot(2) = Xp(2) - (-k1*X(2)*X(6) + km1*Z(4) - k2*X(2)*Z(2));
+    res_X_dot(3) = Xp(3) - (k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3));
+    res_X_dot(4) = Xp(4) - (-k3*X(4)*X(6) + km3*Z(3));
+    res_X_dot(5) = Xp(5) - (k1*X(2)*X(6) - km1*Z(4));
+    res_X_dot(6) = Xp(6) - (-k1*X(2)*X(6) + km1*Z(4) -k3*X(4)*X(6) + km3*Z(3));
 
-    Z0 = [z0;z1;z2;z3]; % Build the array of initial conditions for the algebraic equations (calculated apriori by fsolve)
+    % Vector of residuals of algebraic states is computed and returned by the following function
+    % (remember: this is a nice way to re-use this function, which was initially employed for refining algebraic guess   % initially using 'fsolve', before we let the model evolve in time)
+    res_Z = algebraicEquations(Z,X,model_params); % returns the residuals of the algebraic variables (i.e. implements the algebraic equations)
 
-    res_Z = algebraicStates(Z0,ce,cs_barrato,Q,T,film,param); % Get the residuals from the algebraic equations
+    %% Assemble the overall augmented residual vector of the system [n_diff+n_alg x 1] column vector (the first n_diff components are residuals of differential variables and the rest of the components are residuals of algebraic variables)
+    overall_residual_vector = [res_X_dot';res_Z']; % (NOTE: transposing a quick solution for scalar ode/dae systems)
+
+end
