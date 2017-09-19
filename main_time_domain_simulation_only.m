@@ -142,6 +142,6 @@ end
 
 %% Adjust figure properties to match the graph reported in paper
 figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
-clear plot_no;
+clear plot_no label_str;
 
 % vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
