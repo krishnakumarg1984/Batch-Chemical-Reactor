@@ -4,3 +4,5 @@
 !_TAG_PROGRAM_NAME	Exuberant Ctags	//
 !_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
 !_TAG_PROGRAM_VERSION	5.8	//
+batchChemReactorModel	batchChemReactorModel.m	/^function [dx_tot, flag, new_data] = batchChemReactorModel(t,XZ,XZp,ida_user_data) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states$/;"	f
+initialise_algebraic_conditions	algebraicEquations.m	/^function [algebraiceqn_residual] = initialise_algebraic_conditions(z,param,x)$/;"	f
