@@ -131,8 +131,8 @@ clear sim_time_ida sim_results_matrix n_alg augmented_state_vector_row;
 for plot_no = 1:length(sim_results_resampled(:,1))
     figure(plot_no);clf;
     plot(sim_time_final/3600,sim_results_resampled(plot_no,:),'o-');
-    xlabel('Time [hours]'); ylabel(['State x_' num2str(plot_no)]);
-    title(['Sim result: State x_' num2str(plot_no)]);axis square;
+    xlabel('Time [hours]'); ylabel(['State x_' num2str(plot_no-1)]);
+    title(['Sim result: State x_' num2str(plot_no-1)]);axis square;
 end
 
 %% Adjust figure properties to match the graph reported in paper
