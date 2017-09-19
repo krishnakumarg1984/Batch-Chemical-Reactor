@@ -10,19 +10,13 @@ function [overall_residual_vector, flag, new_data] = batchChemReactorModel(t,XZ,
 
     %% Unpack data from the 'UserData' structure into various fields
     model_params = ida_user_data_struct.model_params;
-    %     t0     = ida_user_data_struct.t0;
-    %     tf     = ida_user_data_struct.tf;
     n_diff       = ida_user_data_struct.n_diff;
     time_profile = ida_user_data_struct.time_profile;
     Temp_profile = ida_user_data_struct.Temp_profile;
-    % n_alg      = ida_user_data.n_alg;
-
 
     X  = [XZ(1);XZ(2);XZ(3);XZ(4);XZ(5);XZ(6)]; % state vector (differential variables only)
     Z  = [XZ(7);XZ(8);XZ(9);XZ(10)];            % Build the array of algebraic variables
     Xp = XZp(1:n_diff);                         % retain only the first n_diff components of the combined derivative vector. Only these are required in the model equations below
-
-    %     residual_array = []; % Empty the total array of residuals.
 
     %% Compute dynamically varying coefficients in the model equations (i.e. those coeffs which are function of time, t)
     T_degC = interp1(time_profile,Temp_profile,t);  % Temperature at time t (degC)
