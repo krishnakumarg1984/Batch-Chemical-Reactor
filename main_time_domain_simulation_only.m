@@ -1,4 +1,3 @@
-% vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
 % This code implements the Batch Chemical Reactor (non-linear set of DAEs)
 % discussed in the journal article:
 % "Applying the extended Kalman filter to systems described by nonlinear
@@ -139,3 +138,5 @@ end
 %% Adjust figure properties to match the graph reported in paper
 figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
 clear plot_no;
+
+% vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
