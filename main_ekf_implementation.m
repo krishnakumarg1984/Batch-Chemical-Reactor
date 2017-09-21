@@ -147,17 +147,17 @@ IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_tru
 
 clear X_init_truth Z_init_truth_fsolve_refined;
 
-diff_states_truth_results_matrix_stored = nan(n_diff,ceil(tf/Ts));
-diff_states_truth_results_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
+diff_states_truth_results_matrix = nan(n_diff,ceil(tf/Ts));
+diff_states_truth_results_matrix(:,1) = XZ_truth_t_local_finish(1:n_diff);
 
-alg_states_truth_results_stored_matrix = nan(n_alg,ceil(tf/Ts));
-alg_states_truth_results_stored_matrix(:,1) = XZ_truth_t_local_finish(n_diff+1:end);
+alg_states_truth_results_matrix = nan(n_alg,ceil(tf/Ts));
+alg_states_truth_results_matrix(:,1) = XZ_truth_t_local_finish(n_diff+1:end);
 
-measurement_outputs_matrix_stored = nan(n_outputs,ceil(tf/Ts));
-measurement_outputs_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_outputs);
+measurement_outputs_matrix = nan(n_outputs,ceil(tf/Ts));
+measurement_outputs_matrix(:,1) = XZ_truth_t_local_finish(1:n_outputs);
 
-t_local_finish_vector = zeros(ceil(tf/Ts),1);
-t_local_finish_vector(1) = t_local_finish;
+sim_time_vector = zeros(ceil(tf/Ts),1);
+sim_time_vector(1) = t_local_finish;
 
 %% EKF initialisation
 x0_init_ekf = 1.6;
@@ -184,10 +184,9 @@ IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t
 % XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
 
 diff_states_ekf_estimated = nan(n_diff,ceil(tf/Ts));
-diff_states_truth_results_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
+diff_states_ekf_estimted(:,1) = XZ_ekf_t_local_finish(1:n_diff);
 
-
-T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable.
 A = full(A_ekf_function(XZ_ekf_t_local_finish,T_degC_init));
 phi = expm(A*Ts);
 P = diag(0.003*ones(1,n_diff));                % Tuning parameters of the EKF
@@ -206,13 +205,13 @@ while (t_local_finish < tf)
     [~, t_local_finish, XZ_truth_t_local_finish] = IDASolve(t_local_finish,'Normal');
     XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
     
-    diff_states_truth_results_matrix_stored(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
-    alg_states_truth_results_stored_matrix(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
+    diff_states_truth_results_matrix(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
+    alg_states_truth_results_matrix(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
     
     measurements_from_true_model_output = XZ_truth_t_local_finish(1:n_outputs);
     
-    measurement_outputs_matrix_stored(:,k+1) = measurements_from_true_model_output;
-    t_local_finish_vector(k+1) = t_local_finish;   
+    measurement_outputs_matrix(:,k+1) = measurements_from_true_model_output;
+    sim_time_vector(k+1) = t_local_finish;
     
     % EKF steps
     L1 = [phi*S L];
@@ -222,7 +221,7 @@ while (t_local_finish < tf)
     % Compute apriori state estimate x_hat_minus at the current time-sample
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
     [~, t_local_finish, XZ_ekf_t_local_finish] = IDASolve(t_local_finish,'Normal');
-    XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
+    %     XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
     C = full(C_ekf_function(XZ_ekf_t_local_finish));
     L2 = [D C*S;zeros(n_diff,n_alg) S];
     R2 = lq(L2);
@@ -239,37 +238,33 @@ while (t_local_finish < tf)
     % update algebraic variables & state derivatives
     [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,XZ_ekf_t_local_finish(1:n_diff),model_params);
     XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,[zeros(n_diff,1);XZ_ekf_t_local_finish(n_diff+1:end)],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
-
-    T_degC_at_t = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+    
+    diff_states_ekf_estimted(:,k+1) = XZ_ekf_t_local_finish(1:n_diff);
+    
+    T_degC_at_t = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable.
     A = full(A_ekf_function(XZ_ekf_t_local_finish,T_degC_at_t));
-
+    
     k = k + 1;
     t_local_start = t_local_finish;
     t_local_finish = t_local_start + Ts;
-
+    
 end
 clear time_step_iter soln_vec_at_t;
 
 %% Plots
-% plot(
+for plot_no = 1:n_diff
+    figure(plot_no);
+    plot(sim_time_vector/3600,diff_states_truth_results_matrix(plot_no,:),'o');hold on;
+    plot(sim_time_vector/3600,diff_states_ekf_estimted(plot_no,:),'xr'); hold off;
+    label_str = ['State Variable x_' num2str(plot_no-1)];
+    xlabel('Time [hours]'); ylabel(label_str);
+    title(['Sim result: ' label_str]);axis square;
+    legend('truth','EKF estimate','location','best');
+end
 
-% %% Plot simulation results (all components of the augmented state vector, i.e. differential and algebraic states)
-% for plot_no = 1:10
-%     figure(plot_no);clf;
-%     if plot_no<=6
-%         plot(t_local_finish_vector(1:end-1)/3600,diff_states_truth_results_matrix_stored(plot_no,1:end-1),'o-');
-%         label_str = ['State Variable x_' num2str(plot_no-1)];
-%     else
-%         plot(t_local_finish_vector(1:end-1)/3600,alg_states_truth_results_stored_matrix(plot_no-6,1:end-1),'o-');
-%         label_str = ['Algebraic Variable z_' num2str(plot_no-7)];
-%     end
-%     xlabel('Time [hours]'); ylabel(label_str);
-%     title(['Sim result: ' label_str]);axis square;
-% end
-% % Adjust figure properties to match the graph reported in paper
-% figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
-% clear plot_no label_str;
-
+% Adjust figure properties to match the graph reported in paper
+figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
+clear plot_no label_str;
 
 %% Function to Compute the Jacobian of the complete augmented system
 % This function is used to evaluate the Jacobian Matrix of the P2D model.
