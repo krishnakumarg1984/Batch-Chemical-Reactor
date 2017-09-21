@@ -1,11 +1,11 @@
 % vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
-function [overall_residual_vector] = batchChemReactorModel(~,XZ,XZp,ida_user_data_struct,T_degC) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
+function [overall_XZ_residual_vector] = batchChemReactorModel(~,XZ,XZp,user_data_struct,T_degC) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
     % This function actually performs the implementation of all the model equations, returning their residuals.
     % Note. X: vector of differential (time-derivative) states, Z: vector of algebraic states
 
     %% Unpack data from the 'UserData' structure into various fields
-    model_params = ida_user_data_struct.model_params;
-    n_diff       = ida_user_data_struct.n_diff;
+    model_params = user_data_struct.model_params;
+    n_diff       = user_data_struct.n_diff;
 
     X  = [XZ(1);XZ(2);XZ(3);XZ(4);XZ(5);XZ(6)]; % state vector (differential variables only)
     Z  = [XZ(7);XZ(8);XZ(9);XZ(10)];            % Build the array of algebraic variables
@@ -36,6 +36,6 @@ function [overall_residual_vector] = batchChemReactorModel(~,XZ,XZp,ida_user_dat
     res_Z = algebraicEquations(Z,X,model_params); % returns the residuals of the algebraic variables (i.e. implements the algebraic equations)
 
     %% Assemble the overall augmented residual vector of the system [n_diff+n_alg x 1] column vector (the first n_diff components are residuals of differential variables and the rest of the components are residuals of algebraic variables)
-    overall_residual_vector = [res_X_dot;res_Z];
+    overall_XZ_residual_vector = [res_X_dot;res_Z];
     
 end

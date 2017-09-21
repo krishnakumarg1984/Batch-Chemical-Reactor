@@ -27,7 +27,6 @@ model_params.Q_plus     = 0.0131;         % gmol/kg  (appears only in algebaric 
 %% User-entered data: Simulation Conditions
 load time_profile; load Temp_profile; % Load the apriori available input (Temperature (degC) vs time(sec)) profile for he given chemical reactor problem
 Ts = 60;                              % How often is simulation results needed ?
-use_jacobian_U = 1;
 
 n_diff = 6; n_alg  = 4; % How many differential and algebraic variables in this DAE problem
 n_inputs = 1;           % How many input variables
@@ -41,7 +40,7 @@ x1_init_truth = 8.32;
 x2_init_truth = 0;
 x3_init_truth = 0;
 x4_init_truth = 0;
-x5_init_truth = 0.0142;
+x5_init_truth = 0.00142;
 
 % Assemble these initial components into a vector representing initial values of differential states (init, i.e. at time t=0)
 X_init_truth = [x0_init_truth;x1_init_truth;x2_init_truth;x3_init_truth;x4_init_truth;x5_init_truth];
@@ -69,126 +68,151 @@ opt_fsolve.FunValCheck = 'on';
 id = [ones(n_diff,1);zeros(n_alg,1)];
 
 % Additional user-data that may be passed to IDA as additional parameters
-ida_user_data_struct.model_params = model_params;
-ida_user_data_struct.n_diff       = n_diff;
-ida_user_data_struct.time_profile = time_profile;
-ida_user_data_struct.Temp_profile = Temp_profile;
+user_data_struct.model_params = model_params;
+user_data_struct.n_diff       = n_diff;
+user_data_struct.time_profile = time_profile;
+user_data_struct.Temp_profile = Temp_profile;
 
 %% Analytical Jacobian (using CasADi) for automatic differentiation for time-stepping (not for EKF linearisation)
 % Import casadi framework
 import casadi.*
 % Define the symbolic variables.
-XZsym   = SX.sym('XZ',[sum(n_diff)+sum(n_alg),1]);
-XZpsym  = SX.sym('XZp',[sum(n_diff)+sum(n_alg),1]);
-Usym    = SX.sym('U',n_inputs);
-cj      = SX.sym('cj',1);
+XZsym  = SX.sym('XZ',[sum(n_diff)+sum(n_alg),1]);
+XZpsym = SX.sym('XZp',[sum(n_diff)+sum(n_alg),1]);
+Usym   = SX.sym('U',n_inputs);
+cj     = SX.sym('cj',1);
 
-ida_user_data_struct.Usym = Usym;
-ida_user_data_struct.use_jacobian_U = use_jacobian_U;
+user_data_struct.Usym = Usym;
 
-% % Get the model equations written in an implicit form in a symbolic way.
-[overall_system_residuals_vector_symbolic, ~, ~] = batchChemReactorModel_IDA(0,XZsym,XZpsym,ida_user_data_struct);
-
-% Evaluate the Jacobian matrix. (Please refer to the Sundials guide for
-% further information about the Jacobian structure).
-symbolic_system_jac_for_IDA = jacobian(overall_system_residuals_vector_symbolic,XZsym) + cj*jacobian(overall_system_residuals_vector_symbolic,XZpsym);
+[sym_XZ_residuals_vector_IDA, ~, ~] = batchChemReactorModel_IDA(0,XZsym,XZpsym,user_data_struct); % Get the model equations in implicit form in a symbolic way
+sym_Jac_Diff_algebraic_States_and_stateDerivs_IDA = jacobian(sym_XZ_residuals_vector_IDA,XZsym) + cj*jacobian(sym_XZ_residuals_vector_IDA,XZpsym); % Compute the  symbolic Jacobian (Please refer to the Sundials' IDA user guide for further information about the Jacobian structure).
 
 % Define a function for the Jacobian evaluation for a given set of
 % differential and algebraic variables.
-JacFun = Function('fJ',{XZsym,cj},{symbolic_system_jac_for_IDA});
+JacFun = Function('fJ',{XZsym,cj},{sym_Jac_Diff_algebraic_States_and_stateDerivs_IDA});
 
 % Store the function into a structure such that IDA will use it for the
 % evaluation of the Jacobian matrix (see the definition of the function
 % djacfn at the end of this file).
-ida_user_data_struct.fJ = JacFun;
+user_data_struct.fJ = JacFun;
 
 % Define the options for Sundials
 ida_options_struct = IDASetOptions('RelTol', opt_IDA.RelTol,...
     'AbsTol'        , opt_IDA.AbsTol,...
     'MaxNumSteps'   , 1500,...
     'VariableTypes' , id,...
-    'UserData'      , ida_user_data_struct,...
+    'UserData'      , user_data_struct,...
     'JacobianFn'    , @djacfn,...
     'LinearSolver'  , 'Dense');
 
 % clear model_params n_diff n_alg time_profile Temp_profile;
 clear id ida_user_data_struct;
 
-% %% For the linearisation of the model for the EKF. extract the individual jacobians from the overall system jacobian
-% symbolic_Jacobian_for_linearisation_Fg_wrt_XZ = jacobian(overall_system_residuals_vector_symbolic,XZsym); % jacobian of the combined F and g system with respect to X and Z vector
-% symbolic_Jacobian_for_linearisation_Fg_wrt_u = jacobian(overall_system_residuals_vector_symbolic,Usym); % jacobian of the combined F and g system with respect to the input vector, U
-% 
-% Fx = symbolic_Jacobian_for_linearisation_Fg_wrt_XZ(1:n_diff,1:n_diff);         % no. of diff eqns x no. of diff variables (states)
-% Fz = symbolic_Jacobian_for_linearisation_Fg_wrt_XZ(1:n_diff,n_diff+1:end);     % no. of diff eqns x no. of algebraic variables
-% gx = symbolic_Jacobian_for_linearisation_Fg_wrt_XZ(n_diff+1:end,1:n_diff);     % no. of algebraic eqns x no. of diff variables (states)
-% gz = symbolic_Jacobian_for_linearisation_Fg_wrt_XZ(n_diff+1:end,n_diff+1:end); % no. of algebraic. eqns x no. of algebraic variables
-% 
-% Fu = symbolic_Jacobian_for_linearisation_Fg_wrt_u(1:n_diff,1:n_inputs);        % no. of diff eqns x no. of inputs
-% gu = symbolic_Jacobian_for_linearisation_Fg_wrt_u(n_diff+1:end,1:n_inputs);    % no. of algebraic eqns x no. of inputs
-% clear n_diff n_alg time_profile Temp_profile;
-% 
-% % JacFun = Function('fJ',{XZsym,Usym},{symbolic_system_jac_for_IDA}); % This sunction will later enable numerical evaluation of the appropriate symbolic Jacobian for a given set of differential and algebraic variables.. This helps in variable name correspondence
-% 
-% %% EKF Initial Conditions for Differential States
-% x0_init_ekf = 1.6;
-% x1_init_ekf = 8.3;
-% x2_init_ekf = 0;
-% x3_init_ekf = 0;
-% x4_init_ekf = 0;
-% x5_init_ekf = 0.014;
-% 
-% sigma_1 = 0.02; % std dev of Gaussian noise added to output1
-% sigma_2 = 0.02; % std dev of Gaussian noise added to output2
-% sigma_3 = 0.02; % std dev of Gaussian noise added to output3
-% sigma_4 = 0.01; % std dev of Gaussian noise added to output4
-% 
-% X_init_ekf = [x0_init_ekf;x1_init_ekf;x2_init_ekf;x3_init_ekf;x4_init_ekf;x5_init_ekf];
-% [Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
-% clear Z_init_guess opt_fsolve model_params;
-% 
-% % XZ_init_ekf = [X_init_ekf;Z_init_ekf_fsolve_refined];
-% A0 = Fz*inv(gz)*gx - Fx;
-% P0 = diag(0.003*ones(1,6));               % Tuning parameters of the EKF
-% Q  = diag(0.0001*ones(1,6));              % Tuning parameters of the EKF
-% R  = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
-%  J = full(fJ(y,cj));
+%% For the linearisation of the model for the EKF. extract the individual jacobians from the overall system jacobian
+[sym_XZ_residuals_vector_ekf, ~, ~] = batchChemReactorModel_ekf(0,XZsym,XZpsym,user_data_struct); % Get the model equations in implicit form in a symbolic way
+sym_Jac_ekf_Fg_wrt_XZ = jacobian(sym_XZ_residuals_vector_ekf,XZsym); % jacobian of the combined F and g system with respect to X and Z vector
+sym_Jac_ekf_Fg_wrt_u = jacobian(sym_XZ_residuals_vector_ekf,Usym); % jacobian of the combined F and g system with respect to the input vector, U
+
+Fx = sym_Jac_ekf_Fg_wrt_XZ(1:n_diff,1:n_diff);         % no. of diff eqns x no. of diff variables (states)
+Fz = sym_Jac_ekf_Fg_wrt_XZ(1:n_diff,n_diff+1:end);     % no. of diff eqns x no. of algebraic variables
+gx = sym_Jac_ekf_Fg_wrt_XZ(n_diff+1:end,1:n_diff);     % no. of algebraic eqns x no. of diff variables (states)
+gz = sym_Jac_ekf_Fg_wrt_XZ(n_diff+1:end,n_diff+1:end); % no. of algebraic. eqns x no. of algebraic variables
+
+Fu = sym_Jac_ekf_Fg_wrt_u(1:n_diff,1:n_inputs);        % no. of diff eqns x no. of inputs
+gu = sym_Jac_ekf_Fg_wrt_u(n_diff+1:end,1:n_inputs);    % no. of algebraic eqns x no. of inputs
+
+A_symbolic = Fz*inv(gz)*gx - Fx;
+
+clear n_diff n_alg;
+
+A_ekf_function = Function('A_ekf',{XZsym,Usym},{A_symbolic}); % This function will later enable numerical evaluation of the appropriate symbolic Jacobian for a given set of differential and algebraic variables.. This helps in variable name correspondence
+
+%% EKF Initial Conditions for Differential States
+x0_init_ekf = 1.6;
+x1_init_ekf = 8.3;
+x2_init_ekf = 0;
+x3_init_ekf = 0;
+x4_init_ekf = 0;
+x5_init_ekf = 0.0014;
+
+sigma_1 = 0.02; % std dev of Gaussian noise added to output1
+sigma_2 = 0.02; % std dev of Gaussian noise added to output2
+sigma_3 = 0.02; % std dev of Gaussian noise added to output3
+sigma_4 = 0.01; % std dev of Gaussian noise added to output4
+
+X_init_ekf = [x0_init_ekf;x1_init_ekf;x2_init_ekf;x3_init_ekf;x4_init_ekf;x5_init_ekf];
+[Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
+clear Z_init_guess opt_fsolve model_params;
+
+
 %% Initialise (IDA) solver and prepare for time-stepping
-clear ans XZ0 XZp0 opt_IDA;
+clear ans opt_IDA;
 
 t_local_start = t0;
 t_local_finish_actual = t_local_start + Ts;
 
+XZ_ekf_t_local_finish = [X_init_ekf;Z_init_ekf_fsolve_refined];
+XZp_ekf_t_local_finish = zeros(size(XZ_ekf_t_local_finish_actual));                     % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
+IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
+
+%% EKF initialisation
+T_degC_init = interp1(time_profile,Temp_profile,t_local_start);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+A = full(A_ekf_function(XZ_ekf_t_local_finish,T_degC_init));
+phi = expm(A*Ts);
+
+P = diag(0.003*ones(1,6));                  % Tuning parameters of the EKF
+S = sqrtm(P);
+Q = diag(0.0001*ones(1,6));                 % Tuning parameters of the EKF
+L = sqrtm(Q);
+% R  = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
+
+%% IDA time-stepping initialisation
 % Build the initial (for t=0) combined (i.e. augmented diff & alg) vectors & the vector of their derivatives to be used by the IDA integrator
 XZ_truth_t_local_finish_actual  = [X_init_truth;Z_init_truth_fsolve_refined]; % XZ is the (combined) augmented vector of differential and algebraic variables
-XZp_t_local_finish = zeros(size(XZ_truth_t_local_finish_actual));                     % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
+XZp_truth_t_local_finish = zeros(size(XZ_truth_t_local_finish_actual));                     % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
 clear X_init_truth Z_init_truth_fsolve_refined;
 
-IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish_actual,XZp_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
+IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish_actual,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
 [~, overall_system_vector_at_t0, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
 
-differential_states_results_matrix_stored = nan(6,ceil(tf/Ts));
-differential_states_results_matrix_stored(:,1) = overall_system_vector_at_t0(1:6);
+diff_states_truth_results_matrix_stored = nan(6,ceil(tf/Ts));
+diff_states_truth_results_matrix_stored(:,1) = overall_system_vector_at_t0(1:6);
 
-algebraic_states_results_stored_matrix = nan(4,ceil(tf/Ts));
-algebraic_states_results_stored_matrix(:,1) = overall_system_vector_at_t0(7:end);
+alg_states_truth_results_stored_matrix = nan(4,ceil(tf/Ts));
+alg_states_truth_results_stored_matrix(:,1) = overall_system_vector_at_t0(7:end);
 
 measurement_outputs_matrix_stored = nan(4,ceil(tf/Ts));
 measurement_outputs_matrix_stored(:,1) = overall_system_vector_at_t0(1:4);
 
 t_local_finish_actual_vector = zeros(ceil(tf/Ts),1);
 t_local_finish_actual_vector(1) = t_local_finish_actual;
-iter = 0;
+k = 1;      % iteration (sample number)
+
 while (t_local_finish_actual < tf)
-    iter = iter + 1;
-    IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish_actual,XZp_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
+    
+    % IDA time-stepping
+    IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish_actual,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
     [~, t_local_finish_actual, XZ_truth_t_local_finish_actual] = IDASolve(t_local_finish_actual,'Normal');
-    XZp_t_local_finish = IDAGet('DerivSolution',t_local_finish_actual,1)';
+    XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish_actual,1)';
+    alg_states_truth_results_stored_matrix(:,k+1) = XZ_truth_t_local_finish_actual(7:end);
+    diff_states_truth_results_matrix_stored(:,k+1) = XZ_truth_t_local_finish_actual(1:6);
+    measurement_outputs_matrix_stored(:,k+1) = XZ_truth_t_local_finish_actual(1:4);
+    t_local_finish_actual_vector(k+1) = t_local_finish_actual;
+    
+    % EKF steps
+    L1 = [phi*S L];
+    R1 = lq(L1);
+    
+    % Compute apriori state estimate x_hat_minus at the current time-sample
+    IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
+    [~, t_local_finish_actual, XZ_ekf_t_local_finish_actual] = IDASolve(t_local_finish_actual,'Normal');
+    XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish_actual,1)';
+
+    k = k + 1;
     t_local_start = t_local_finish_actual;
     t_local_finish_actual = t_local_start + Ts;
-    algebraic_states_results_stored_matrix(:,iter) = XZ_truth_t_local_finish_actual(7:end);
-    differential_states_results_matrix_stored(:,iter) = XZ_truth_t_local_finish_actual(1:6);
-    measurement_outputs_matrix_stored(:,iter) = XZ_truth_t_local_finish_actual(1:4);
-    t_local_finish_actual_vector(iter) = t_local_finish_actual;
+    
+
 end
 clear time_step_iter soln_vec_at_t;
 
@@ -196,10 +220,10 @@ clear time_step_iter soln_vec_at_t;
 for plot_no = 1:10
     figure(plot_no);clf;
     if plot_no<=6
-        plot(t_local_finish_actual_vector(1:end-1)/3600,differential_states_results_matrix_stored(plot_no,1:end-1),'o-');
+        plot(t_local_finish_actual_vector(1:end-1)/3600,diff_states_truth_results_matrix_stored(plot_no,1:end-1),'o-');
         label_str = ['State Variable x_' num2str(plot_no-1)];
     else
-        plot(t_local_finish_actual_vector(1:end-1)/3600,algebraic_states_results_stored_matrix(plot_no-6,1:end-1),'o-');
+        plot(t_local_finish_actual_vector(1:end-1)/3600,alg_states_truth_results_stored_matrix(plot_no-6,1:end-1),'o-');
         label_str = ['Algebraic Variable z_' num2str(plot_no-7)];
     end
     xlabel('Time [hours]'); ylabel(label_str);
