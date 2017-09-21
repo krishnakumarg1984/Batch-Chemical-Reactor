@@ -167,10 +167,7 @@ x3_init_ekf = 0;
 x4_init_ekf = 0;
 x5_init_ekf = 0.0014;
 
-sigma_1 = 0.02; % std dev of Gaussian noise added to output1
-sigma_2 = 0.02; % std dev of Gaussian noise added to output2
-sigma_3 = 0.02; % std dev of Gaussian noise added to output3
-sigma_4 = 0.01; % std dev of Gaussian noise added to output4
+sensor_noise_sigma_vector = [0.02;0.02;0.02;0.01]; % std dev of Gaussian noise added to outputs
 
 X_init_ekf = [x0_init_ekf;x1_init_ekf;x2_init_ekf;x3_init_ekf;x4_init_ekf;x5_init_ekf];
 [Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
@@ -208,10 +205,13 @@ while (t_local_finish < tf)
     diff_states_truth_results_matrix(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
     alg_states_truth_results_matrix(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
     
-    measurements_from_true_model_output = XZ_truth_t_local_finish(1:n_outputs);
-%     measurements_from_true_model_output(1) = measurements_from_true_model_output + rand(
+    measurements_from_true_model_outputs = XZ_truth_t_local_finish(1:n_outputs);
     
-    measurement_outputs_matrix(:,k+1) = measurements_from_true_model_output;
+    for sensor = 1:n_outputs
+        measurements_from_true_model_outputs(sensor) = measurements_from_true_model_outputs(sensor) + sensor_noise_sigma_vector(sensor)*randn(1); % Measurements are corrupted by noise
+    end
+    
+    measurement_outputs_matrix(:,k+1) = measurements_from_true_model_outputs;
     sim_time_vector(k+1) = t_local_finish;
     
     % EKF steps
@@ -233,8 +233,8 @@ while (t_local_finish < tf)
     K = K_hat*inv(W); % Kalman gain
     
     % update (differential variables), i.e. states using measurement and kalman gain
-    K*(measurements_from_true_model_output - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
-    XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measurements_from_true_model_output - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
+    K*(measurements_from_true_model_outputs - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
+    XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measurements_from_true_model_outputs - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
     
     % update algebraic variables & state derivatives
     [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,XZ_ekf_t_local_finish(1:n_diff),model_params);
@@ -255,8 +255,8 @@ clear time_step_iter soln_vec_at_t;
 %% Plots
 for plot_no = 1:n_diff
     figure(plot_no);
-    plot(sim_time_vector/3600,diff_states_truth_results_matrix(plot_no,:),'o');hold on;
-    plot(sim_time_vector/3600,diff_states_ekf_estimted(plot_no,:),'xr'); hold off;
+    plot(sim_time_vector/3600,diff_states_truth_results_matrix(plot_no,:),'o-');hold on;
+    plot(sim_time_vector/3600,diff_states_ekf_estimted(plot_no,:),'xr--'); hold off;
     label_str = ['State Variable x_' num2str(plot_no-1)];
     xlabel('Time [hours]'); ylabel(label_str);
     title(['Sim result: ' label_str]);axis square;
