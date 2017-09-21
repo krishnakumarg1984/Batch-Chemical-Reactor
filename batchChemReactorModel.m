@@ -26,21 +26,24 @@ function [overall_residual_vector, flag, new_data] = batchChemReactorModel(t,XZ,
     km1    = model_params.alpha_m1*exp(-model_params.Em1_over_R/(T_degC+273));
     km3    = 0.5*km1;
 
+    % overall_residual_vector = [];
     %% Actual model equations of the non-linear DAE model
     % Components of residual vector of differential state variables (i.e. time-domain derivative variables)
     % Refer to paper for the equations themselves
-    res_X_dot(1) = Xp(1) - (-k2*X(2)*Z(2));
-    res_X_dot(2) = Xp(2) - (-k1*X(2)*X(6) + km1*Z(4) - k2*X(2)*Z(2));
-    res_X_dot(3) = Xp(3) - (k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3));
-    res_X_dot(4) = Xp(4) - (-k3*X(4)*X(6) + km3*Z(3));
-    res_X_dot(5) = Xp(5) - (k1*X(2)*X(6) - km1*Z(4));
-    res_X_dot(6) = Xp(6) - (-k1*X(2)*X(6) + km1*Z(4) -k3*X(4)*X(6) + km3*Z(3));
+    res_X_dot1 = Xp(1) - (-k2*X(2)*Z(2));
+    res_X_dot2 = Xp(2) - (-k1*X(2)*X(6) + km1*Z(4) - k2*X(2)*Z(2));
+    res_X_dot3 = Xp(3) - (k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3));
+    res_X_dot4 = Xp(4) - (-k3*X(4)*X(6) + km3*Z(3));
+    res_X_dot5 = Xp(5) - (k1*X(2)*X(6) - km1*Z(4));
+    res_X_dot6 = Xp(6) - (-k1*X(2)*X(6) + km1*Z(4) -k3*X(4)*X(6) + km3*Z(3));
+
+    res_X_dot = [res_X_dot1;res_X_dot2;res_X_dot3;res_X_dot4;res_X_dot5;res_X_dot6];
 
     % Vector of residuals of algebraic states is computed and returned by the following function
     % (remember: this is a nice way to re-use this function, which was initially employed for refining algebraic guess   % initially using 'fsolve', before we let the model evolve in time)
     res_Z = algebraicEquations(Z,X,model_params); % returns the residuals of the algebraic variables (i.e. implements the algebraic equations)
 
     %% Assemble the overall augmented residual vector of the system [n_diff+n_alg x 1] column vector (the first n_diff components are residuals of differential variables and the rest of the components are residuals of algebraic variables)
-    overall_residual_vector = [res_X_dot';res_Z']; % (NOTE: transposing a quick solution for scalar ode/dae systems)
+    overall_residual_vector = [res_X_dot;res_Z]; % (NOTE: transposing a quick solution for scalar ode/dae systems)
 
 end

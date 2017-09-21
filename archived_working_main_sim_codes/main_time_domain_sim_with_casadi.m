@@ -50,8 +50,8 @@ t0 = 0;          % initial time at start of simulation
 tf = 0.35*3600;  % simulation end time
 
 % Define absolute and relative tolerances for time-stepping solver (IDA)
-opt_IDA.AbsTol = 1e-7;
-opt_IDA.RelTol = 1e-7;
+opt_IDA.AbsTol = 1e-6;
+opt_IDA.RelTol = 1e-6;
 
 % 'fsolve' is used to solve for the initial values of algebraic variables by keeping the differential variables constant at their initial values.
 opt_fsolve             = optimset;
@@ -62,7 +62,7 @@ opt_fsolve.FunValCheck = 'on';
 [Z_init_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_truth,model_params);
 clear Z_init_guess opt_fsolve;
 
-% Build the initial (for t=0) combined (i.e. augmented diff & alg) vectors & the vector of their derivatives to be used by the IDA integrator 
+% Build the initial (for t=0) combined (i.e. augmented diff & alg) vectors & the vector of their derivatives to be used by the IDA integrator
 XZ0  = [X_init_truth;Z_init_fsolve_refined]; % XZ is the (combined) augmented vector of differential and algebraic variables
 XZp0 = zeros(size(XZ0));                     % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
 clear X_init_truth Z_init_fsolve_refined;
@@ -74,28 +74,52 @@ id = [ones(n_diff,1);zeros(n_alg,1)];
 
 % Additional user-data that may be passed to IDA as additional parameters
 ida_user_data_struct.model_params = model_params;
-% ida_user_data.t0                = t0;
-% ida_user_data.tf                = tf;
 ida_user_data_struct.n_diff       = n_diff;
-% ida_user_data_struct.n_alg      = n_alg;
 ida_user_data_struct.time_profile = time_profile;
 ida_user_data_struct.Temp_profile = Temp_profile;
 
+
+%% Analytical Jacobian for automatic differentiation using CasADi
+% Import casadi framework
+import casadi.*
+% Define the symbolic variables.
+XZsym    = SX.sym('x',[sum(n_diff)+sum(n_alg),1]);
+XZpsym   = SX.sym('xp',[sum(n_diff)+sum(n_alg),1]);
+cj      = SX.sym('cj',1);
+
 clear model_params n_diff n_alg time_profile Temp_profile;
 
-% Set a few desired options for Sundials IDA
+% % Get the model equations written in an implicit form in a symbolic way.
+[residuals_vector_symbolic, ~, ~] = batchChemReactorModel(0,XZsym,XZpsym,ida_user_data_struct);
+
+% Evaluate the Jacobian matrix. (Please refer to the Sundials guide for
+% further information about the Jacobian structure).
+J = jacobian(residuals_vector_symbolic,XZsym) + cj*jacobian(residuals_vector_symbolic,XZpsym);
+
+% Define a function for the Jacobian evaluation for a given set of
+% differential and algebraic variables.
+JacFun = Function('fJ',{XZsym,cj},{J});
+
+% Store the function into a structure such that IDA will use it for the
+% evaluation of the Jacobian matrix (see the definition of the function
+% djacfn at the end of this file).
+ida_user_data_struct.fJ = JacFun;
+
+% Define the options for Sundials
 ida_options_struct = IDASetOptions('RelTol', opt_IDA.RelTol,...
     'AbsTol'        , opt_IDA.AbsTol,...
     'MaxNumSteps'   , 1500,...
     'VariableTypes' , id,...
     'UserData'      , ida_user_data_struct,...
+    'JacobianFn'    , @djacfn,...
     'LinearSolver'  , 'Dense');
 
-clear opt_IDA id ida_user_data_struct;
+% clear model_params n_diff n_alg time_profile Temp_profile;
+clear id ida_user_data_struct;
 
 %% Initialise (IDA) solver and prepare for time-stepping
 IDAInit(@batchChemReactorModel,t0,XZ0,XZp0,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
-clear ans XZ0 XZp0 ida_options_struct;
+clear ans XZ0 XZp0 opt_IDA;
 
 [~, combined_diff_alg_result_vector_t0, ~] = IDACalcIC(t0 + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
 
@@ -106,14 +130,17 @@ sim_time_ida                = t;
 clear t0 combined_diff_alg_result_vector_t0;
 
 %% IMPORTANT: Actual time-domain Simulation (i.e. time-stepping) is implemented here
-time_step_iter = 2; 
+time_step_iter = 2;
 
+tic;
 while(t<tf)
     [~, t, soln_vec_at_t] = IDASolve(tf,'OneStep');
     sim_results_matrix(:,time_step_iter) = soln_vec_at_t;
     sim_time_ida              = [sim_time_ida t];
     time_step_iter        = time_step_iter + 1;
 end
+toc;
+
 clear time_step_iter soln_vec_at_t;
 
 %% Post-process simulation results in order to retain only the samples at mulitples of sampling time, Ts
@@ -141,7 +168,24 @@ for plot_no = 1:length(sim_results_resampled(:,1))
 end
 
 %% Adjust figure properties to match the graph reported in paper
-figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
-clear plot_no label_str;
+% figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
+% % clear plot_no label_str;
+%
+% This function is used to evaluate the Jacobian Matrix of the P2D model.
+function [J, flag, new_data] = djacfn(t, y, yp, rr, cj, data)
 
+% Extract the function object (representing the Jacobian)
+fJ    = data.fJ;
+
+% Evaluate the Jacobian with respect to the present values of the states and their time derivatives.
+try
+    J = full(fJ(y,cj));
+catch
+    J = [];
+end
+
+% Return dummy values
+flag        = 0;
+new_data    = [];
+end
 % vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:

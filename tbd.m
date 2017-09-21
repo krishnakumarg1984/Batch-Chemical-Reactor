@@ -1,13 +1,5 @@
 
-%% Jacobian and EKF related (future code TBD with Davide)
-% import casadi.*
-% % Define the symbolic variables.
-% xsym  = SX.sym('x',[sum(n_diff)+sum(n_alg),1]);
-% xpsym = SX.sym('xp',[sum(n_diff)+sum(n_alg),1]);
-% cj    = SX.sym('cj',1);
-
-% Get the model equations written in an implicit form in a symbolic way.
-% [dx_tot, ~, ~] = batchChemReactorModel(0,xsym,xpsym);
+%% EKF related (future code TBD with Davide)
 
 %% EKF related
 % %% Initial Conditions for Differential States (ekf)
