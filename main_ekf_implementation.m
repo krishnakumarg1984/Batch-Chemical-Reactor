@@ -9,7 +9,7 @@
 
 %% Basic settings for MATLAB IDE, plotting, numerical display etc.
 % NOTE: In this problem statement/code, 'X', 'Z' etc. are vectors, whereas 'x' , 'z' etc. represent scalar quantities
-clear;close all;clc; format long g; format compact;
+clear;close all;clc; format short g; format compact;
 set(0,'defaultaxesfontsize',12,'defaultaxeslinewidth',2,'defaultlinelinewidth',2.5,'defaultpatchlinewidth',2,'DefaultFigureWindowStyle','docked');
 
 %% Constant Model Parameters for this chemical reactor
@@ -30,6 +30,7 @@ Ts = 60;                              % How often is simulation results needed ?
 
 n_diff = 6; n_alg  = 4; % How many differential and algebraic variables in this DAE problem
 n_inputs = 1;           % How many input variables
+n_outputs = 4;          % How many output variables
 Z_init_guess = zeros(n_alg,1);  % user's initial guess for algebraic variables (this will be refined by fsolve before time-stepping)
 
 % Initial Conditions for Differential States (truth) The word "truth" is used because we are going to implement an EKF soon, and we will need this model to serve as out "experiment", i.e. "truth"
@@ -70,6 +71,7 @@ user_data_struct.model_params = model_params;
 user_data_struct.n_diff       = n_diff;
 user_data_struct.time_profile = time_profile;
 user_data_struct.Temp_profile = Temp_profile;
+user_data_struct.n_outputs    = n_outputs;
 
 %% Analytical Jacobian (using CasADi) for automatic differentiation for time-stepping (not for EKF linearisation)
 % Import casadi framework
@@ -122,6 +124,12 @@ gu = sym_Jac_ekf_Fg_wrt_u(n_diff+1:end,1:n_inputs);    % no. of algebraic eqns x
 A_symbolic = Fz*inv(gz)*gx - Fx;
 A_ekf_function = Function('A_ekf',{XZsym,Usym},{A_symbolic}); % This function will later enable numerical evaluation of the appropriate symbolic Jacobian for a given set of differential and algebraic variables.. This helps in variable name correspondence
 
+sym_h_vector_ekf = outputFunction(XZsym,user_data_struct);
+sym_Jac_ekf_h_wrt_XZ = jacobian(sym_h_vector_ekf,XZsym);  % only the first n_diff states are present in the output vector
+hx = sym_Jac_ekf_h_wrt_XZ(1:n_outputs,1:n_diff); %  Be careful - The matrix indices/slices used are only applicable for this problem (batch chemical reactor)
+C_symbolic = hx;
+C_ekf_function = Function('C_ekf',{XZsym},{C_symbolic}); % This function will later enable numerical evaluation of the appropriate symbolic Jacobian for a given set of differential and algebraic variables.. This helps in variable name correspondence
+
 %% Initialise time-step and prepare for time-stepping of the true model that produces "experimental" data
 % clear ans opt_IDA;
 t_local_start = t0;
@@ -132,20 +140,21 @@ t_local_finish = t_local_start + Ts;
 XZ_truth_t_local_finish  = [X_init_truth;Z_init_truth_fsolve_refined]; % XZ is the (combined) augmented vector of differential and algebraic variables
 XZp_truth_zeros_init_guess = zeros(size(XZ_truth_t_local_finish));      % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
 XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,XZp_truth_zeros_init_guess,user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+% XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,[zeros(n_diff,1);Z_init_truth_fsolve_refined],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
 IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
 [~, XZ_truth_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
 % XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
 
 clear X_init_truth Z_init_truth_fsolve_refined;
 
-diff_states_truth_results_matrix_stored = nan(6,ceil(tf/Ts));
-diff_states_truth_results_matrix_stored(:,1) = XZ_truth_t_local_finish(1:6);
+diff_states_truth_results_matrix_stored = nan(n_diff,ceil(tf/Ts));
+diff_states_truth_results_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
 
-alg_states_truth_results_stored_matrix = nan(4,ceil(tf/Ts));
-alg_states_truth_results_stored_matrix(:,1) = XZ_truth_t_local_finish(7:end);
+alg_states_truth_results_stored_matrix = nan(n_alg,ceil(tf/Ts));
+alg_states_truth_results_stored_matrix(:,1) = XZ_truth_t_local_finish(n_diff+1:end);
 
-measurement_outputs_matrix_stored = nan(4,ceil(tf/Ts));
-measurement_outputs_matrix_stored(:,1) = XZ_truth_t_local_finish(1:4);
+measurement_outputs_matrix_stored = nan(n_outputs,ceil(tf/Ts));
+measurement_outputs_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_outputs);
 
 t_local_finish_vector = zeros(ceil(tf/Ts),1);
 t_local_finish_vector(1) = t_local_finish;
@@ -165,7 +174,7 @@ sigma_4 = 0.01; % std dev of Gaussian noise added to output4
 
 X_init_ekf = [x0_init_ekf;x1_init_ekf;x2_init_ekf;x3_init_ekf;x4_init_ekf;x5_init_ekf];
 [Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
-clear Z_init_guess opt_fsolve model_params;
+clear Z_init_guess;
 
 XZ_ekf_t_local_finish = [X_init_ekf;Z_init_ekf_fsolve_refined];
 XZp_ekf_zeros_init_guess = zeros(size(XZ_ekf_t_local_finish));    % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
@@ -174,30 +183,36 @@ IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t
 [~, XZ_ekf_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
 % XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
 
-T_degC_init = interp1(time_profile,Temp_profile,t_local_start);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+diff_states_ekf_estimated = nan(n_diff,ceil(tf/Ts));
+diff_states_truth_results_matrix_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
+
+
+T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
 A = full(A_ekf_function(XZ_ekf_t_local_finish,T_degC_init));
 phi = expm(A*Ts);
-P = diag(0.003*ones(1,6));                % Tuning parameters of the EKF
+P = diag(0.003*ones(1,n_diff));                % Tuning parameters of the EKF
 S = sqrtm(P);
-Q = diag(0.0001*ones(1,6));               % Tuning parameters of the EKF
+Q = diag(0.0001*ones(1,n_diff));               % Tuning parameters of the EKF
 L = sqrtm(Q);
 R  = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
+D = sqrtm(R);
 
 %% Time-stepper code
 k = 1;      % iteration (sample number)
 
 while (t_local_finish < tf)
     
-    % IDA time-stepping
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
     [~, t_local_finish, XZ_truth_t_local_finish] = IDASolve(t_local_finish,'Normal');
     XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
     
-    alg_states_truth_results_stored_matrix(:,k+1) = XZ_truth_t_local_finish(7:end);
-    diff_states_truth_results_matrix_stored(:,k+1) = XZ_truth_t_local_finish(1:6);
-    measurement_outputs_matrix_stored(:,k+1) = XZ_truth_t_local_finish(1:4);
-    t_local_finish_vector(k+1) = t_local_finish;
+    diff_states_truth_results_matrix_stored(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
+    alg_states_truth_results_stored_matrix(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
     
+    measurements_from_true_model_output = XZ_truth_t_local_finish(1:n_outputs);
+    
+    measurement_outputs_matrix_stored(:,k+1) = measurements_from_true_model_output;
+    t_local_finish_vector(k+1) = t_local_finish;   
     
     % EKF steps
     L1 = [phi*S L];
@@ -208,30 +223,51 @@ while (t_local_finish < tf)
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
     [~, t_local_finish, XZ_ekf_t_local_finish] = IDASolve(t_local_finish,'Normal');
     XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
+    C = full(C_ekf_function(XZ_ekf_t_local_finish));
+    L2 = [D C*S;zeros(n_diff,n_alg) S];
+    R2 = lq(L2);
+    W = R2(1:n_outputs,1:n_outputs);
+    K_hat = R2(n_outputs+1:end,1:n_outputs);
+    S = R2(n_outputs+1:end,n_outputs+1:end);
+    
+    K = K_hat*inv(W); % Kalman gain
+    
+    % update (differential variables), i.e. states using measurement and kalman gain
+    K*(measurements_from_true_model_output - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
+    XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measurements_from_true_model_output - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
+    
+    % update algebraic variables & state derivatives
+    [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,XZ_ekf_t_local_finish(1:n_diff),model_params);
+    XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,[zeros(n_diff,1);XZ_ekf_t_local_finish(n_diff+1:end)],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+
+    T_degC_at_t = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+    A = full(A_ekf_function(XZ_ekf_t_local_finish,T_degC_at_t));
 
     k = k + 1;
     t_local_start = t_local_finish;
     t_local_finish = t_local_start + Ts;
-    
 
 end
 clear time_step_iter soln_vec_at_t;
 
-%% Plot simulation results (all components of the augmented state vector, i.e. differential and algebraic states)
-for plot_no = 1:10
-    figure(plot_no);clf;
-    if plot_no<=6
-        plot(t_local_finish_vector(1:end-1)/3600,diff_states_truth_results_matrix_stored(plot_no,1:end-1),'o-');
-        label_str = ['State Variable x_' num2str(plot_no-1)];
-    else
-        plot(t_local_finish_vector(1:end-1)/3600,alg_states_truth_results_stored_matrix(plot_no-6,1:end-1),'o-');
-        label_str = ['Algebraic Variable z_' num2str(plot_no-7)];
-    end
-    xlabel('Time [hours]'); ylabel(label_str);
-    title(['Sim result: ' label_str]);axis square;
-end
-% Adjust figure properties to match the graph reported in paper
-figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
+%% Plots
+% plot(
+
+% %% Plot simulation results (all components of the augmented state vector, i.e. differential and algebraic states)
+% for plot_no = 1:10
+%     figure(plot_no);clf;
+%     if plot_no<=6
+%         plot(t_local_finish_vector(1:end-1)/3600,diff_states_truth_results_matrix_stored(plot_no,1:end-1),'o-');
+%         label_str = ['State Variable x_' num2str(plot_no-1)];
+%     else
+%         plot(t_local_finish_vector(1:end-1)/3600,alg_states_truth_results_stored_matrix(plot_no-6,1:end-1),'o-');
+%         label_str = ['Algebraic Variable z_' num2str(plot_no-7)];
+%     end
+%     xlabel('Time [hours]'); ylabel(label_str);
+%     title(['Sim result: ' label_str]);axis square;
+% end
+% % Adjust figure properties to match the graph reported in paper
+% figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
 % clear plot_no label_str;
 
 
