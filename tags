@@ -5,4 +5,22 @@
 !_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
 !_TAG_PROGRAM_VERSION	5.8	//
 algebraicEquations	algebraicEquations.m	/^function [algebraiceqn_residual] = algebraicEquations(z,x,param)$/;"	f
-batchChemReactorModel	batchChemReactorModel.m	/^function [overall_residual_vector, flag, new_data] = batchChemReactorModel(t,XZ,XZp,ida_user_data_struct) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states$/;"	f
+batchChemReactorModel	batchChemReactorModel.m	/^function [overall_XZ_residual_vector] = batchChemReactorModel(~,XZ,XZp,user_data_struct,T_degC) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states$/;"	f
+batchChemReactorModel_IDA	batchChemReactorModel_IDA.m	/^function [overall_XZ_residual_vector, flag, new_data] = batchChemReactorModel_IDA(t,XZ,XZp,ida_user_data_struct) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states$/;"	f
+batchChemReactorModel_ekf	batchChemReactorModel_ekf.m	/^function [overall_XZ_residual_vector, flag, new_data] = batchChemReactorModel_ekf(t,XZ,XZp,user_data_struct) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states$/;"	f
+djacfn	archived_working_main_sim_codes/main_psuedo_realtime_simulation_with_casadi.m	/^function [J, flag, new_data] = djacfn(t, y, yp, rr, cj, data)$/;"	f
+djacfn	archived_working_main_sim_codes/main_time_domain_sim_with_casadi.m	/^function [J, flag, new_data] = djacfn(t, y, yp, rr, cj, data)$/;"	f
+djacfn	main_ekf_implementation.m	/^function [J, flag, new_data] = djacfn(t, y, yp, rr, cj, data)$/;"	f
+lq_double	matrix_factorisations_file_exchange/lq.c	/^void lq_double(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+lq_single	matrix_factorisations_file_exchange/lq.c	/^void lq_single(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+mexFunction	matrix_factorisations_file_exchange/lq.c	/^void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+mexFunction	matrix_factorisations_file_exchange/ql.c	/^void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+mexFunction	matrix_factorisations_file_exchange/qr1.c	/^void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+mexFunction	matrix_factorisations_file_exchange/rq.c	/^void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+min	matrix_factorisations_file_exchange/factor.h	14;"	d
+ql_double	matrix_factorisations_file_exchange/ql.c	/^void ql_double(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+ql_single	matrix_factorisations_file_exchange/ql.c	/^void ql_single(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+qr_double	matrix_factorisations_file_exchange/qr1.c	/^void qr_double(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+qr_single	matrix_factorisations_file_exchange/qr1.c	/^void qr_single(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+rq_double	matrix_factorisations_file_exchange/rq.c	/^void rq_double(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
+rq_single	matrix_factorisations_file_exchange/rq.c	/^void rq_single(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])$/;"	f
