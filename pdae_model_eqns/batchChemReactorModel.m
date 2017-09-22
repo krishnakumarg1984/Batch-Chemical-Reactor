@@ -22,12 +22,19 @@ function [overall_XZ_residual_vector] = batchChemReactorModel(~,XZ,XZp,user_data
     %% Actual model equations of the non-linear DAE model
     % Components of residual vector of differential state variables (i.e. time-domain derivative variables)
     % Refer to paper for the equations themselves
-    rhs1 = -k2*X(2)*Z(2)                                      + user_data_struct.process_noise(1);
-    rhs2 = -k1*X(2)*X(6) + km1*Z(4) - k2*X(2)*Z(2)            + user_data_struct.process_noise(2); 
-    rhs3 =  k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3)            + user_data_struct.process_noise(3);
-    rhs4 = -k3*X(4)*X(6) + km3*Z(3)                           + user_data_struct.process_noise(4);
-    rhs5 =  k1*X(2)*X(6) - km1*Z(4)                           + user_data_struct.process_noise(5);
-    rhs6 = -k1*X(2)*X(6) + km1*Z(4) - k3*X(4)*X(6) + km3*Z(3) + user_data_struct.process_noise(6); 
+    if strcmp(user_data_struct.process_noise_flag,'white_noise')
+%         process_noise_vector = user_data_struct.chol_Q*randn(n_diff,1);
+        process_noise_vector = zeros(n_diff,1);
+    else
+        process_noise_vector = zeros(n_diff,1);
+    end
+    
+    rhs1 = -k2*X(2)*Z(2)                                      + process_noise_vector(1);
+    rhs2 = -k1*X(2)*X(6) + km1*Z(4) - k2*X(2)*Z(2)            + process_noise_vector(2); 
+    rhs3 =  k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3)            + process_noise_vector(3);
+    rhs4 = -k3*X(4)*X(6) + km3*Z(3)                           + process_noise_vector(4);
+    rhs5 =  k1*X(2)*X(6) - km1*Z(4)                           + process_noise_vector(5);
+    rhs6 = -k1*X(2)*X(6) + km1*Z(4) - k3*X(4)*X(6) + km3*Z(3) + process_noise_vector(6); 
     
     res_X_dot1 = Xp(1) - rhs1;
     res_X_dot2 = Xp(2) - rhs2;

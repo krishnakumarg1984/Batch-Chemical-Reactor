@@ -11,7 +11,7 @@
 % NOTE: In this problem statement/code, 'X', 'Z' etc. are vectors, whereas 'x' , 'z' etc. represent scalar quantities
 clear;close all;clc; format short g; format compact;
 set(0,'defaultaxesfontsize',12,'defaultaxeslinewidth',2,'defaultlinelinewidth',2.5,'defaultpatchlinewidth',2,'DefaultFigureWindowStyle','docked');
-
+tic;
 %% Constant Model Parameters for this chemical reactor
 model_params.alpha_1    = 1.3708e12/3600; % kg/gmol/s
 model_params.E1_over_R  = 9.2984e3;       % K
@@ -48,7 +48,7 @@ clear x0_init_truth x1_init_truth x2_init_truth x3_init_truth x4_init_truth x5_i
 
 % Specify simulation interval
 t0 = 0;          % initial time at start of simulation
-tf = 0.36*3600;  % simulation end time
+tf = 0.35*3600;  % simulation end time
 
 % Define absolute and relative tolerances for time-stepping solver (IDA)
 opt_IDA.AbsTol = 1e-6;
@@ -81,11 +81,9 @@ import casadi.*
 % Define the symbolic variables.
 XZsym  = SX.sym('XZ',[sum(n_diff)+sum(n_alg),1]);
 XZpsym = SX.sym('XZp',[sum(n_diff)+sum(n_alg),1]);
-Usym   = SX.sym('U',n_inputs);
 cj     = SX.sym('cj',1);
 
-user_data_struct.Usym = Usym;
-user_data_struct.process_noise = zeros(n_diff,1);
+user_data_struct.process_noise_flag = 'noise_free';
 [sym_XZ_residuals_vector_IDA, ~, ~] = batchChemReactorModel_IDA(0,XZsym,XZpsym,user_data_struct); % Get the model equations in implicit form in a symbolic way
 sym_Jac_Diff_algebraic_States_and_stateDerivs_IDA = jacobian(sym_XZ_residuals_vector_IDA,XZsym) + cj*jacobian(sym_XZ_residuals_vector_IDA,XZpsym); % Compute the  symbolic Jacobian (Please refer to the Sundials' IDA user guide for further information about the Jacobian structure).
 
@@ -102,6 +100,8 @@ user_data_struct.fJ = JacFun;
 % clear id;
 
 %% EKF linearisation of the model
+Usym   = SX.sym('U',n_inputs);
+user_data_struct.Usym = Usym;
 [sym_XZ_residuals_vector_ekf, ~, ~] = batchChemReactorModel_ekf(0,XZsym,XZpsym,user_data_struct); % Get the model equations in implicit form in a symbolic way
 sym_Jac_ekf_Fg_wrt_XZ = jacobian(sym_XZ_residuals_vector_ekf,XZsym); % jacobian of the combined F and g system with respect to X and Z vector
 sym_Jac_ekf_Fg_wrt_u = jacobian(sym_XZ_residuals_vector_ekf,Usym); % jacobian of the combined F and g system with respect to the input vector, U
@@ -125,7 +125,9 @@ C_ekf_fcn = Function('C_ekf',{XZsym},{C_ekf_symbolic}); % This function will lat
 
 %% EKF initialisation
 P = diag(0.003*ones(1,n_diff));                % Tuning parameters of the EKF
-Q = 0.0001*diag(0.0001*ones(1,n_diff));         % Tuning parameters of the EKF
+% Q = diag(0.0001*ones(1,n_diff));         % Tuning parameters of the EKF
+Q = diag(1e-5*ones(1,n_diff));         % Tuning parameters of the EKF
+user_data_struct.chol_Q =  chol(Q);
 % Q = 1*diag(1e-6*ones(1,n_diff));             % Tuning parameters of the EKF
 R = diag([0.0004,0.0004,0.0001,0.0001]);        % Tuning parameters of the EKF
 
@@ -137,31 +139,6 @@ S = chol(P,'lower'); L = chol(Q,'lower');D = chol(R,'lower');
 t_local_start = t0;
 t_local_finish = t_local_start + Ts;
 
-% sneaky little way to get the state+algebraic time derivatives at initial time
-% Build the initial (for t=0) combined (i.e. augmented diff & alg) vectors & the vector of their derivatives to be used by the IDA integrator
-user_data_struct.process_noise = chol(Q)*randn(n_diff,1);
-ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
-XZ_truth_t_local_finish  = [X_init_truth;Z_init_truth_fsolve_refined]; % XZ is the (combined) augmented vector of differential and algebraic variables
-XZp_truth_zeros_init_guess = zeros(size(XZ_truth_t_local_finish));      % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
-XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,XZp_truth_zeros_init_guess,user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
-% XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,[zeros(n_diff,1);Z_init_truth_fsolve_refined],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
-IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
-[~, XZ_truth_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
-% XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
-
-clear X_init_truth Z_init_truth_fsolve_refined;
-
-diff_states_truth_results_stored = nan(n_diff,ceil(tf/Ts));
-diff_states_truth_results_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
-
-alg_states_truth_results_stored = nan(n_alg,ceil(tf/Ts));
-alg_states_truth_results_stored(:,1) = XZ_truth_t_local_finish(n_diff+1:end);
-
-measurement_outputs_stored = nan(n_outputs,ceil(tf/Ts));
-measurement_outputs_stored(:,1) = XZ_truth_t_local_finish(1:n_outputs);
-
-sim_time_vector = zeros(ceil(tf/Ts),1);
-sim_time_vector(1) = t_local_finish;
 
 %% EKF initialisation
 x0_init_ekf = 1.6;
@@ -172,109 +149,133 @@ x4_init_ekf = 0;
 x5_init_ekf = 0.0014;
 % x5_init_ekf = 0.014;
 
-sensor_noise_sigma_vector = [0.02;0.02;0.02;0.01]; % std dev of Gaussian noise added to outputs
-
 X_init_ekf = [x0_init_ekf;x1_init_ekf;x2_init_ekf;x3_init_ekf;x4_init_ekf;x5_init_ekf];
 [Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
 clear Z_init_guess;
 
-user_data_struct.process_noise = zeros(n_diff,1);
+user_data_struct.process_noise_flag = 'noise_free';
 ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
 XZ_ekf_t_local_finish = [X_init_ekf;Z_init_ekf_fsolve_refined];
 XZp_ekf_zeros_init_guess = zeros(size(XZ_ekf_t_local_finish));    % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
 XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,XZp_ekf_zeros_init_guess,user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+XZp_ekf_t_local_finish(n_diff+1:end) = 0;  % The previous line gave correct value of state derivatives, but returns an incorrect calculation of algebraic time-derivatives
 IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
 [~, XZ_ekf_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
 % XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
 
-diff_states_ekf_estimates_stored = nan(n_diff,ceil(tf/Ts));
-diff_states_ekf_estimates_stored(:,1) = XZ_ekf_t_local_finish(1:n_diff);
+diff_vars_ekf_estimates_stored = nan(n_diff,ceil(tf/Ts));
+diff_vars_ekf_estimates_stored(:,1) = XZ_ekf_t_local_finish(1:n_diff);
+measured_outputs = nan(n_outputs,1);
+
+%% True plant initialisation
+% sneaky little way to get the state+algebraic time derivatives at initial time
+% Build the initial (for t=0) combined (i.e. augmented diff & alg) vectors & the vector of their derivatives to be used by the IDA integrator
+user_data_struct.process_noise_flag = 'white_noise';
+ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
+XZ_truth_t_local_finish  = [X_init_truth;Z_init_truth_fsolve_refined]; % XZ is the (combined) augmented vector of differential and algebraic variables
+XZp_truth_zeros_init_guess = zeros(size(XZ_truth_t_local_finish));      % 'p' in this variable name stands for time-derivative (i.e. "prime"); This vector contains the derivatives of both states and algebraic variables. This is needed by IDA. However, the actual model equations (in this paper) only need the first n_diff variables (i.e. only the portion of this combined vector containing only the time-derivatives). Please refer to the function that implements the model equations if you need further clarification
+XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,XZp_truth_zeros_init_guess,user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+XZp_truth_t_local_finish(n_diff+1:end) = 0;  % The previous line gave correct value of state derivatives, but returns an incorrect calculation of algebraic time-derivatives
+% XZp_truth_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_truth_t_local_finish,[zeros(n_diff,1);Z_init_truth_fsolve_refined],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
+[~, XZ_truth_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions) might have to change the 10 to a different horizon
+% XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
+
+clear X_init_truth Z_init_truth_fsolve_refined;
+
+state_vars_truth_results_stored = nan(n_diff,ceil(tf/Ts));
+state_vars_truth_results_stored(:,1) = XZ_truth_t_local_finish(1:n_diff);
+
+alg_vars_truth_results_stored = nan(n_alg,ceil(tf/Ts));
+alg_vars_truth_results_stored(:,1) = XZ_truth_t_local_finish(n_diff+1:end);
+
+measurement_outputs_stored = nan(n_outputs,ceil(tf/Ts));
+measurement_outputs_stored(:,1) = XZ_truth_t_local_finish(1:n_outputs);
+
+sim_time_vector = zeros(ceil(tf/Ts),1);
+sim_time_vector(1) = t0;
+
+%% Time-stepper code
 T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable.
 A = full(A_ekf_fcn(XZ_ekf_t_local_finish,T_degC_init));
 phi = expm(A*Ts);
-measured_outputs = zeros(n_outputs,1);
-
-%% Time-stepper code
 k = 1;      % iteration (sample number)
-
-while (t_local_finish < tf)
-    user_data_struct.process_noise = chol(Q)*randn(n_diff,1);
-    ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
+t = t0;
+while (t < tf)
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_truth_t_local_finish,XZp_truth_t_local_finish,ida_options_struct); % does it not call the stateequation? (only algebraic????? Not sure)
-    [~, t_local_finish, XZ_truth_t_local_finish] = IDASolve(t_local_finish,'Normal');
+%     [~, t_local_finish, XZ_truth_t_local_finish] = IDASolve(t_local_finish,'Normal');
+    [~, t, XZ_truth_t_local_finish] = IDASolve(tf,'Normal_Tstop');
     XZp_truth_t_local_finish = IDAGet('DerivSolution',t_local_finish,1);
+
+    state_vars_truth_results_stored(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
+    alg_vars_truth_results_stored(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
     
-    diff_states_truth_results_stored(:,k+1) = XZ_truth_t_local_finish(1:n_diff);
-    alg_states_truth_results_stored(:,k+1) = XZ_truth_t_local_finish(n_diff+1:end);
-    
-    true_model_outputs = outputFunction(XZ_truth_t_local_finish,user_data_struct);
-    %     true_model_outputs = XZ_truth_t_local_finish(1:n_outputs);
-    
-    for output_sensor = 1:n_outputs
-        %         if t_local_finish>=0.5*tf
-        %             sensor_noise_sigma_vector = zeros(n_outputs,1);
-        %         end
-        sensor_noise_sigma_vector = zeros(n_outputs,1);
-        measured_outputs(output_sensor) = true_model_outputs(output_sensor) + sensor_noise_sigma_vector(output_sensor)*randn(1); % Measurements are corrupted by zero mean, gaussian noise
-    end
+    true_model_outputs = outputFunction(XZ_truth_t_local_finish,user_data_struct);    
+%     measured_outputs = true_model_outputs + chol(R)*randn(n_outputs,1); % Measurements are corrupted by zero mean, gaussian noise
+    measured_outputs = true_model_outputs;
     
     measurement_outputs_stored(:,k+1) = measured_outputs;
     sim_time_vector(k+1) = t_local_finish;
     
-    % EKF steps
-    L1 = [phi*S L];
-    R1 = lq(L1);
-    S = R1(1:n_diff,1:n_diff);
+%     % EKF steps
+%     L1 = [phi*S L];
+%     R1 = lq(L1);
+%     S = R1(1:n_diff,1:n_diff);
+%     
+%     % Compute apriori state estimate x_hat_minus at the current time-sample
+%     user_data_struct.process_noise_flag = 'noise_free';
+%     ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
+%     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct);
+%     [~, t_local_finish, XZ_ekf_t_local_finish] = IDASolve(t_local_finish,'Normal');
+%     %     XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
+%     C = full(C_ekf_fcn(XZ_ekf_t_local_finish));
+%     L2 = [D C*S;zeros(n_diff,n_alg) S];
+%     R2 = lq(L2);
+%     W = R2(1:n_outputs,1:n_outputs);
+%     K_bar = R2(n_outputs+1:end,1:n_outputs); % dim: nx x ny
+%     S = R2(n_outputs+1:end,n_outputs+1:end); % dim: nx x ny
+%     
+%     K = K_bar/W; % Kalman gain
+%     
+%     % update (differential variables), i.e. states using measurement and kalman gain
+%     XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measured_outputs - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
+%     diff_vars_ekf_estimates_stored(:,k+1) = XZ_ekf_t_local_finish(1:n_diff);
+%     
+%     % update algebraic variables & state derivatives
+%     [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,diff_vars_ekf_estimates_stored(:,k+1),model_params);
+%     XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,[zeros(n_diff,1);XZ_ekf_t_local_finish(n_diff+1:end)],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
+%     
+%     T_degC_at_t = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time, t (in degC)
+%     A = full(A_ekf_fcn(XZ_ekf_t_local_finish,T_degC_at_t));
+%     phi = expm(A*Ts);
     
-    % Compute apriori state estimate x_hat_minus at the current time-sample
-    user_data_struct.process_noise = zeros(n_diff,1);
+%     k = k + 1;
+
+%     t_local_start = t_local_finish;
+%     t_local_finish = t_local_start + Ts;
+    t_local_start = t;
+    user_data_struct.process_noise = 'white_noise';
     ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
-    IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_ekf_t_local_finish,XZp_ekf_t_local_finish,ida_options_struct);
-    [~, t_local_finish, XZ_ekf_t_local_finish] = IDASolve(t_local_finish,'Normal');
-    %     XZp_ekf_t_local_finish = IDAGet('DerivSolution',t_local_finish,1)';
-    C = full(C_ekf_fcn(XZ_ekf_t_local_finish));
-    L2 = [D C*S;zeros(n_diff,n_alg) S];
-    R2 = lq(L2);
-    W = R2(1:n_outputs,1:n_outputs);
-    K_bar = R2(n_outputs+1:end,1:n_outputs); % dim: nx x ny
-    S = R2(n_outputs+1:end,n_outputs+1:end); % dim: nx x ny
     
-    K = K_bar/W; % Kalman gain
-    
-    % update (differential variables), i.e. states using measurement and kalman gain
-    XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measured_outputs - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
-    diff_states_ekf_estimates_stored(:,k+1) = XZ_ekf_t_local_finish(1:n_diff);
-    
-    % update algebraic variables & state derivatives
-    [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,diff_states_ekf_estimates_stored(:,k+1),model_params);
-    XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,[zeros(n_diff,1);XZ_ekf_t_local_finish(n_diff+1:end)],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
-    
-    T_degC_at_t = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time, t (in degC)
-    A = full(A_ekf_fcn(XZ_ekf_t_local_finish,T_degC_at_t));
-    phi = expm(A*Ts);
-    
-    k = k + 1;
-    t_local_start = t_local_finish;
-    t_local_finish = t_local_start + Ts;
-    
+    fprintf('The simulation time is now : %3.5f seconds\n',t);
 end
 clear time_step_iter soln_vec_at_t;
 
 %% Plots
-for plot_no = 1:n_diff
-    figure(plot_no);
-    plot(sim_time_vector/3600,diff_states_truth_results_stored(plot_no,:),'s-');hold on;
-    plot(sim_time_vector/3600,diff_states_ekf_estimates_stored(plot_no,:),'ro--'); hold off;
-    label_str = ['State Variable x_' num2str(plot_no-1)];
-    xlabel('Time [hours]'); ylabel(label_str);
-    title(['Sim result: ' label_str]);axis square;
-    legend('truth','EKF estimate','location','best');
-end
+% for plot_no = 1:n_diff
+%     figure(plot_no);
+%     plot(sim_time_vector/3600,state_vars_truth_results_stored(plot_no,:),'s-');hold on;
+%     plot(sim_time_vector/3600,diff_vars_ekf_estimates_stored(plot_no,:),'ro--'); hold off;
+%     label_str = ['State Variable x_' num2str(plot_no-1)];
+%     xlabel('Time [hours]'); ylabel(label_str);
+%     title(['Sim result: ' label_str]);axis square;
+%     legend('truth','EKF estimate','location','best');
+% end
 
-% Adjust figure properties to match the graph reported in paper
-figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
-clear plot_no label_str;
-
+% % Adjust figure properties to match the graph reported in paper
+% figure(1); ylim([0.7 1.6]); xlim([0 0.35]);
+% clear plot_no label_str;
+toc;
 %% Function to Compute the Jacobian of the complete augmented system
 % This function is used to evaluate the Jacobian Matrix of the P2D model.
 function [J, flag, new_data] = djacfn(t, y, yp, rr, cj, data)
@@ -293,6 +294,15 @@ end
 flag     = 0;
 new_data = [];
 end
+
+% function ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct)
+% ida_options_struct = IDASetOptions('RelTol', opt_IDA.RelTol,...
+%     'AbsTol'        , opt_IDA.AbsTol,...
+%     'MaxNumSteps'   , 1500,...
+%     'VariableTypes' , id,...
+%     'UserData'      , user_data_struct,...
+%     'LinearSolver'  , 'Dense');
+% end
 
 function ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct)
 ida_options_struct = IDASetOptions('RelTol', opt_IDA.RelTol,...
