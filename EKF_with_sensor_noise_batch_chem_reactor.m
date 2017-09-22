@@ -188,14 +188,14 @@ T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (d
 A = full(A_ekf_fcn(XZ_ekf_t_local_finish,T_degC_init));
 phi = expm(A*Ts);
 P = diag(0.003*ones(1,n_diff));                % Tuning parameters of the EKF
-S = sqrtm(P);
+S = chol(P,'lower');
 Q = diag(0.0001*ones(1,n_diff));               % Tuning parameters of the EKF
-L = sqrtm(Q);
+L = chol(Q,'lower');
 R  = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
-D = sqrtm(R);
+D = chol(R,'lower');
 
 %% Time-stepper code
-measured_outputs = zeros(n_outputs,1); 
+measured_outputs = zeros(n_outputs,1);
 k = 1;      % iteration (sample number)
 
 while (t_local_finish < tf)
@@ -210,7 +210,9 @@ while (t_local_finish < tf)
     true_model_outputs = XZ_truth_t_local_finish(1:n_outputs);
     
     for output_sensor = 1:n_outputs
-%         sensor_noise_sigma_vector = zeros(4,1);
+        if t_local_finish>=0.5*tf
+            sensor_noise_sigma_vector = zeros(4,1);
+        end
         measured_outputs(output_sensor) = true_model_outputs(output_sensor) + sensor_noise_sigma_vector(output_sensor)*randn(1); % Measurements are corrupted by zero mean, gaussian noise
     end
     
@@ -238,7 +240,7 @@ while (t_local_finish < tf)
     % update (differential variables), i.e. states using measurement and kalman gain
     XZ_ekf_t_local_finish(1:n_diff) = XZ_ekf_t_local_finish(1:n_diff) + K*(measured_outputs - outputFunction(XZ_ekf_t_local_finish,user_data_struct));
     diff_states_ekf_estimates_stored(:,k+1) = XZ_ekf_t_local_finish(1:n_diff);
-
+    
     % update algebraic variables & state derivatives
     [XZ_ekf_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_ekf_t_local_finish(n_diff+1:end),opt_fsolve,diff_states_ekf_estimates_stored(:,k+1),model_params);
     XZp_ekf_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_ekf_t_local_finish,[zeros(n_diff,1);XZ_ekf_t_local_finish(n_diff+1:end)],user_data_struct)); % Evaluate the residual vector at t=0, and multiply it by -1
