@@ -14,7 +14,7 @@ function [overall_XZ_residual_vector, flag, new_data] = batchChemReactorModel_ID
     
     %% Compute dynamic input coefficients (i.e. those input coeffs which are function of time, t)
 %         T_degC = ida_user_data_struct.Usym;
-    T_degC = interp1(time_profile,Temp_profile,t);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
+    T_degC = interp1(time_profile,Temp_profile,t,'linear','extrap');  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable. 
     
     %% Assemble the overall augmented residual vector of the system [n_diff+n_alg x 1] column vector (the first n_diff components are residuals of differential variables and the rest of the components are residuals of algebraic variables)
     [overall_XZ_residual_vector] = batchChemReactorModel(t,XZ,XZp,ida_user_data_struct,T_degC);

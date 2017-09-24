@@ -21,3 +21,4 @@ octave-workspace
 tags
 
 *.fig
+*.ps
