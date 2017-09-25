@@ -44,7 +44,7 @@ tf = 0.35*3600;  % simulation end time [sec]
 
 n_diff = 6; n_alg  = 4; % no. of differential and algebraic variables in this DAE problem
 n_inputs = 1;           % no. of input variables
-n_outputs = 3;          % no. of output variables
+n_outputs = 1;          % no. of output variables
 
 X_init_truth = [1.5776;8.32;0;0;0;0.00142]; % Vector representing initial values of differential states (init, i.e. at time t=0)
 Z_init_guess = zeros(n_alg,1);  % user's initial guess for algebraic variables (this will be refined by fsolve before time-stepping)
@@ -70,7 +70,6 @@ user_data_struct.model_params = model_params;
 user_data_struct.n_diff       = n_diff;
 user_data_struct.time_profile = time_profile;
 user_data_struct.Temp_profile = Temp_profile;
-user_data_struct.n_outputs    = n_outputs;
 user_data_struct.Ts           = Ts;
 user_data_struct.enable_process_noise = enable_process_noise;
 
@@ -82,7 +81,6 @@ XZpsym = SX.sym('XZp',[sum(n_diff)+sum(n_alg),1]);
 cj     = SX.sym('cj',1);
 
 user_data_struct.process_noise_flag = 'noise_free';
-ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
 [sym_XZ_residuals_vector_IDA, ~, ~] = batchChemReactorModel_IDA(0,XZsym,XZpsym,user_data_struct); % Get the model's residual (equations in implicit form [F g] = 0) in a symbolic way
 sym_Jac_Diff_algebraic_States_and_stateDerivs_IDA = jacobian(sym_XZ_residuals_vector_IDA,XZsym) + cj*jacobian(sym_XZ_residuals_vector_IDA,XZpsym); % Compute the  symbolic Jacobian (Please refer to the Sundials' IDA user guide for further information about the Jacobian structure).
 clear sym_XZ_residuals_vector_IDA;
@@ -114,6 +112,8 @@ Gamma_bottom_MandelaEKF_fcn = Function('Gamma_bottom_Mandela_EKF',{XZsym,Usym},{
 clear Usym gx gz Gamma_bottom_MandelaEKF_symbolic;
 
 sym_h_vector_ekf = outputFunction_only_algebraic_vars(XZsym,user_data_struct);
+n_outputs = length(sym_h_vector_ekf);
+user_data_struct.n_outputs    = n_outputs;
 sym_Jac_ekf_h_wrt_XZ = jacobian(sym_h_vector_ekf,XZsym);
 clear sym_h_vector_ekf;
 H_aug_MandelaEKF_symbolic = sym_Jac_ekf_h_wrt_XZ;
@@ -128,7 +128,7 @@ t_local_finish = t_local_start + Ts;
 %% EKF parameterisation & initialisation
 Q = diag(0.0001*ones(1,n_diff));         % Tuning parameters of the EKF
 % R = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
-R = diag([0.0004,0.0004,0.0001]); % Tuning parameters of the EKF
+R = diag(0.01*ones(n_outputs,1)); % Tuning parameters of the EKF
 P_MandelaEKF = diag([0.004*ones(1,n_diff) zeros(1,n_alg)]);
 
 X_init_ekf = [1.6;8.3;0;0;0;0.0014];
@@ -202,7 +202,7 @@ while (t_local_finish < tf)
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_MandelaEKF_t_local_finish,XZp_MandelaEKF_t_local_finish,ida_options_struct);
     [~, ~, XZ_MandelaEKF_t_local_finish] = IDASolve(t_local_finish,'Normal');
     
-    T_degC_at_t_local_finish = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at time, t (in degC)
+    T_degC_at_t_local_finish = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at current time, t (degC)
     A_aug_MandelaEKF = full(A_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish));
     phi_MandelaEKF = expm(A_aug_MandelaEKF*Ts);
     Gamma_MandelaEKF = [eye(n_diff);full(Gamma_bottom_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish))];
@@ -210,7 +210,6 @@ while (t_local_finish < tf)
     H_aug_MandelaEKF_at_present_oppoint = full(H_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish));
     K_aug_MandelaEKF = P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint'*inv(H_aug_MandelaEKF_at_present_oppoint*P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint' + R);
     XZ_MandelaEKF_t_local_finish = XZ_MandelaEKF_t_local_finish + K_aug_MandelaEKF*(measured_outputs - outputFunction(XZ_MandelaEKF_t_local_finish,user_data_struct));
-    %     XZ_MandelaEKF_t_local_finish(1:n_diff) = mandela_augmented_states_update(1:n_diff);
     estimated_state_vars_MandelaEKF_stored(:,k+1) = XZ_MandelaEKF_t_local_finish(1:n_diff);
     
     [XZ_MandelaEKF_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_MandelaEKF_t_local_finish(n_diff+1:end),opt_fsolve,estimated_state_vars_MandelaEKF_stored(:,k+1),model_params);
@@ -232,8 +231,9 @@ clear time_step_iter soln_vec_at_t model_params opt_fsolve id A_aug_MandelaEKF_f
 clear H_aug_MandelaEKF_fcn opt_IDA XZ_MandelaEKF_t_local_finish;
 clear time_profile Temp_profile user_data_struct;
 clear t_local_start t_local_finish;
-clear ans Q R P_MandelaEKF ida_options_struct measured_outputs;
-clear k XZ_truth_t_local_finish true_model_outputs T_degC_at_t_local_finish;
+clear ans Q R ida_options_struct measured_outputs;
+clear k XZ_truth_t_local_finish true_model_outputs T_degC_at_t_local_finish K_aug_MandelaEKF;
+clear A_aug_MandelaEKF phi_MandelaEKF Gamma_MandelaEKF P_MandelaEKF H_aug_MandelaEKF_at_present_oppoint;
 
 %% Plot truth and estimated results
 close all;
@@ -245,7 +245,7 @@ for plot_no = 1:n_diff
     label_str = ['State Variable x_' num2str(plot_no-1)];
     xlabel('Time [hours]'); ylabel(label_str);xlim([0 tf/3600]);
     title(['Sim result: ' label_str]);axis square;
-    legend('truth','Becerra sqrt EKF','Mandela EKF','location','best');
+    legend('truth','Mandela EKF','location','best');
 end
 
 % Adjust figure properties to match the graph reported in paper
