@@ -1,5 +1,5 @@
 % vim: set nospell nowrap textwidth=0 wrapmargin=0 formatoptions-=t:
-function [overall_XZ_residual_vector] = batchChemReactorModel(t,XZ,XZp,user_data_struct,T_degC) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
+function [overall_XZ_residual_vector,rhs_state_eqn] = batchChemReactorModel(t,XZ,XZp,user_data_struct,T_degC) % x_tot contains both x (differential states), z (algebraic variables) and derivates of states
 % This function actually performs the implementation of all the model equations, returning their residuals.
 % Note. X: vector of differential (time-derivative) states, Z: vector of algebraic states
 
@@ -39,6 +39,8 @@ rhs3 =  k2*X(2)*Z(2) + k3*X(4)*X(6) - km3*Z(3)            + process_noise_vector
 rhs4 = -k3*X(4)*X(6) + km3*Z(3)                           + process_noise_vector(4);
 rhs5 =  k1*X(2)*X(6) - km1*Z(4)                           + process_noise_vector(5);
 rhs6 = -k1*X(2)*X(6) + km1*Z(4) - k3*X(4)*X(6) + km3*Z(3) + process_noise_vector(6);
+
+rhs_state_eqn = [rhs1;rhs2;rhs3;rhs4;rhs5;rhs6];
 
 res_X_dot1 = Xp(1) - rhs1;
 res_X_dot2 = Xp(2) - rhs2;
