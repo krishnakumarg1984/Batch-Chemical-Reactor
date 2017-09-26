@@ -44,7 +44,7 @@ tf = 0.35*3600;  % simulation end time [sec]
 
 n_diff = 6; n_alg  = 4; % no. of differential and algebraic variables in this DAE problem
 n_inputs = 1;           % no. of input variables
-n_outputs = 1;          % no. of output variables
+% n_outputs = 1;          % no. of output variables
 
 X_init_truth = [1.5776;8.32;0;0;0;0.00142]; % Vector representing initial values of differential states (init, i.e. at time t=0)
 Z_init_guess = zeros(n_alg,1);  % user's initial guess for algebraic variables (this will be refined by fsolve before time-stepping)
@@ -73,7 +73,7 @@ user_data_struct.Temp_profile = Temp_profile;
 user_data_struct.Ts           = Ts;
 user_data_struct.enable_process_noise = enable_process_noise;
 
-%% Analytical Jacobian of noise-free system (using CasADi's automatic differentiation) 
+%% Analytical Jacobian of noise-free system (using CasADi's automatic differentiation)
 % This section is mainly used for time-stepping (not for EKF linearisation)
 import casadi.*
 XZsym  = SX.sym('XZ', [sum(n_diff)+sum(n_alg),1]);
@@ -126,10 +126,11 @@ t_local_start = t0;
 t_local_finish = t_local_start + Ts;
 
 %% EKF parameterisation & initialisation
-Q = diag(0.0001*ones(1,n_diff));         % Tuning parameters of the EKF
+Q = diag(0.001*ones(1,n_diff));         % Tuning parameters of the EKF
 % R = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
-R = diag(0.01*ones(n_outputs,1)); % Tuning parameters of the EKF
+R = diag(0.1*ones(n_outputs,1)); % Tuning parameters of the EKF
 P_MandelaEKF = diag([0.004*ones(1,n_diff) zeros(1,n_alg)]);
+% P_MandelaEKF = diag([0.004*ones(1,n_diff) 0.000001*ones(1,n_alg)]);
 
 X_init_ekf = [1.6;8.3;0;0;0;0.0014];
 [Z_init_ekf_fsolve_refined,~,~,~,~] = fsolve(@algebraicEquations,Z_init_guess,opt_fsolve,X_init_ekf,model_params);
@@ -151,7 +152,6 @@ estimated_state_vars_MandelaEKF_stored = nan(n_diff,ceil(tf/Ts));
 estimated_state_vars_MandelaEKF_stored(:,1) = XZ_MandelaEKF_t_local_finish(1:n_diff);
 
 %% True plant initialisation (ensure that this section is executed just prior to time-stepping loop, because of the requirement of consistent noise signal)
-
 XZ_truth_t_local_finish  = [X_init_truth;Z_init_truth_fsolve_refined];  % XZ is the (combined) augmented vector of differential and algebraic variables
 clear X_init_truth Z_init_truth_fsolve_refined;
 
@@ -179,6 +179,10 @@ sim_time_vector(1) = t0;
 T_degC_init = interp1(time_profile,Temp_profile,t0);  % Temperature at time t (degC)  % For time-stepping by IDA (or even by IDACalcIC), a symbolic 'U' is not acceptable.
 clear t0;
 
+A_aug_MandelaEKF = full(A_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_init));
+phi_MandelaEKF = expm(A_aug_MandelaEKF*Ts);
+Gamma_MandelaEKF = [eye(n_diff);full(Gamma_bottom_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_init))];
+
 k = 1;      % iteration number (sample number)
 
 while (t_local_finish < tf)
@@ -195,18 +199,19 @@ while (t_local_finish < tf)
     if enable_sensor_noise == 1
         measured_outputs = measured_outputs + chol(R)*randn(n_outputs,1); % Measurements are corrupted by zero mean, gaussian noise
     end
-        
+    
     %% EKF steps
     user_data_struct.process_noise_flag = 'noise_free';
     ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
     IDAInit(@batchChemReactorModel_IDA,t_local_start,XZ_MandelaEKF_t_local_finish,XZp_MandelaEKF_t_local_finish,ida_options_struct);
+    
+    [~, XZ_MandelaEKF_t_local_finish, ~] = IDACalcIC(t_local_start + 0.1,'FindAlgebraic'); % (Find consistent initial conditions)
     [~, ~, XZ_MandelaEKF_t_local_finish] = IDASolve(t_local_finish,'Normal');
     
     T_degC_at_t_local_finish = interp1(time_profile,Temp_profile,t_local_finish);  % Temperature at current time, t (degC)
-    A_aug_MandelaEKF = full(A_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish));
-    phi_MandelaEKF = expm(A_aug_MandelaEKF*Ts);
-    Gamma_MandelaEKF = [eye(n_diff);full(Gamma_bottom_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish))];
-    P_MandelaEKF = phi_MandelaEKF*P_MandelaEKF*phi_MandelaEKF' + Gamma_MandelaEKF*Q*Gamma_MandelaEKF';
+    
+    P_MandelaEKF = phi_MandelaEKF*P_MandelaEKF*phi_MandelaEKF' + Gamma_MandelaEKF*Q*Gamma_MandelaEKF'; % This line is definitely within the loop
+    
     H_aug_MandelaEKF_at_present_oppoint = full(H_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish));
     K_aug_MandelaEKF = P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint'*inv(H_aug_MandelaEKF_at_present_oppoint*P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint' + R);
     XZ_MandelaEKF_t_local_finish = XZ_MandelaEKF_t_local_finish + K_aug_MandelaEKF*(measured_outputs - outputFunction(XZ_MandelaEKF_t_local_finish,user_data_struct));
@@ -214,10 +219,16 @@ while (t_local_finish < tf)
     
     [XZ_MandelaEKF_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_MandelaEKF_t_local_finish(n_diff+1:end),opt_fsolve,estimated_state_vars_MandelaEKF_stored(:,k+1),model_params);
     XZp_MandelaEKF_t_local_finish = -1*(batchChemReactorModel_IDA(0,XZ_MandelaEKF_t_local_finish,[zeros(n_diff,1);XZ_MandelaEKF_t_local_finish(n_diff+1:end)],user_data_struct));
+    XZp_MandelaEKF_t_local_finish(n_diff+1:end) = full(Gamma_bottom_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish))*XZp_MandelaEKF_t_local_finish(1:n_diff);
+    
     P_MandelaEKF = (eye(n_diff+n_alg) - K_aug_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint)*P_MandelaEKF;
     
+    A_aug_MandelaEKF = full(A_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish));
+    phi_MandelaEKF = expm(A_aug_MandelaEKF*Ts);
+    Gamma_MandelaEKF = [eye(n_diff);full(Gamma_bottom_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish,T_degC_at_t_local_finish))];
+    
     %% Prepare for next iteration
-    sim_time_vector(k+1) = t_local_finish;  
+    sim_time_vector(k+1) = t_local_finish;
     k = k + 1;
     
     t_local_start = t_local_finish;
