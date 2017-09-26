@@ -128,7 +128,7 @@ t_local_finish = t_local_start + Ts;
 %% EKF parameterisation & initialisation
 Q = diag(0.001*ones(1,n_diff));         % Tuning parameters of the EKF
 % R = diag([0.0004,0.0004,0.0001,0.0001]); % Tuning parameters of the EKF
-R = diag(0.1*ones(n_outputs,1)); % Tuning parameters of the EKF
+R = diag(0.0001*ones(n_outputs,1)); % Tuning parameters of the EKF
 P_MandelaEKF = diag([0.004*ones(1,n_diff) zeros(1,n_alg)]);
 % P_MandelaEKF = diag([0.004*ones(1,n_diff) 0.000001*ones(1,n_alg)]);
 
@@ -214,7 +214,7 @@ while (t_local_finish < tf)
     
     H_aug_MandelaEKF_at_present_oppoint = full(H_aug_MandelaEKF_fcn(XZ_MandelaEKF_t_local_finish));
     K_aug_MandelaEKF = P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint'*inv(H_aug_MandelaEKF_at_present_oppoint*P_MandelaEKF*H_aug_MandelaEKF_at_present_oppoint' + R);
-    XZ_MandelaEKF_t_local_finish = XZ_MandelaEKF_t_local_finish + K_aug_MandelaEKF*(measured_outputs - outputFunction(XZ_MandelaEKF_t_local_finish,user_data_struct));
+    XZ_MandelaEKF_t_local_finish = XZ_MandelaEKF_t_local_finish + K_aug_MandelaEKF*(measured_outputs - outputFunction_only_algebraic_vars(XZ_MandelaEKF_t_local_finish,user_data_struct));
     estimated_state_vars_MandelaEKF_stored(:,k+1) = XZ_MandelaEKF_t_local_finish(1:n_diff);
     
     [XZ_MandelaEKF_t_local_finish(n_diff+1:end),~,~,~,~] = fsolve(@algebraicEquations,XZ_MandelaEKF_t_local_finish(n_diff+1:end),opt_fsolve,estimated_state_vars_MandelaEKF_stored(:,k+1),model_params);
@@ -236,6 +236,10 @@ while (t_local_finish < tf)
     user_data_struct.process_noise = 'pseudo_white_noise';
     ida_options_struct = compute_updated_ida_options(opt_IDA,id,user_data_struct);
     
+%     if rank(obsv(A_aug_MandelaEKF,H_aug_MandelaEKF_at_present_oppoint))~=2
+%         disp('Non full rank.... Not obervable');
+%         return;
+%     end
 end
 
 clear time_step_iter soln_vec_at_t model_params opt_fsolve id A_aug_MandelaEKF_fcn Gamma_bottom_MandelaEKF_fcn;
